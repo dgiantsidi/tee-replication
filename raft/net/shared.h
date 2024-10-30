@@ -43,7 +43,7 @@ static constexpr auto gets_per_mille = 200;
 template <class... Ts> struct overloaded : Ts... { // NOLINT
   using Ts::operator()...;
 };
-template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
+template <class... Ts> overloaded(Ts...)->overloaded<Ts...>;
 
 /**
  ** It takes as an argument a ptr to an array of size 4 or bigger and
@@ -91,9 +91,10 @@ class ErrNo {
 
 public:
   [[nodiscard]] inline ErrNo() noexcept : err_no(errno) {}
-  inline explicit ErrNo(int err_no) noexcept : err_no(err_no) {}
+  inline explicit ErrNo(int err_no) noexcept
+      : err_no(err_no){}
 
-  [[nodiscard]] inline auto msg() const noexcept -> std::string_view {
+            [[nodiscard]] inline auto msg() const noexcept -> std::string_view {
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     return strerror(err_no);
   }
@@ -153,7 +154,7 @@ static int connect_to_the_server(int port, char const * /*hostname*/,
   auto rep_fd = 0;
   auto sockfd = 0;
   if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-    fmt::print("socket err={}\n",std::strerror(errno));
+    fmt::print("socket err={}\n", std::strerror(errno));
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     exit(1);
   }
@@ -167,7 +168,7 @@ static int connect_to_the_server(int port, char const * /*hostname*/,
 
   if (connect(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
               sizeof(struct sockaddr)) == -1) {
-    fmt::print("connect issue err={}\n",std::strerror(errno));
+    fmt::print("connect issue err={}\n", std::strerror(errno));
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     exit(1);
   }

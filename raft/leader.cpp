@@ -1,3 +1,4 @@
+#include "common.hpp"
 #include "config.h"
 #include "net/shared.h"
 #include <arpa/inet.h>
@@ -6,6 +7,7 @@
 #include <fcntl.h>
 #include <fmt/format.h>
 #include <iostream>
+#include <mutex>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <string>
@@ -16,8 +18,6 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
-#include "common.hpp"
-#include <mutex>
 
 constexpr std::string_view usage =
     "usage: ./leader <ip_follower_1> <port_1> <ip_follower_2> <port_2>";
@@ -32,26 +32,30 @@ constexpr int backlog = 1024;
 
 struct state {
   explicit state(int _counter, int _cmt_idx)
-      : counter(_counter), cmt_idx(_cmt_idx){ last_cmt_node = -1;};
+      : counter(_counter), cmt_idx(_cmt_idx) {
+    last_cmt_node = -1;
+  };
   int counter;
   int cmt_idx;
   int last_cmt_node;
 };
 
-
 static void
-gen_and_send_request( std::unordered_map<int, connection>& cluster_info, int req_id) {
-  for (auto& connection : cluster_info) {
+gen_and_send_request(std::unordered_map<int, connection> &cluster_info,
+                     int req_id) {
+  for (auto &connection : cluster_info) {
     auto req_size = sizeof(int) + sizeof(int);
-    int node_id = connection.first; //dst node
+    int node_id = connection.first; // dst node
     // TODO: also send the leader node
-    std::unique_ptr<char[]> tmp = std::make_unique<char[]>(req_size+length_size_field);
-    std::unique_ptr<char[]> tmp2 = std::make_unique<char[]>(req_size+length_size_field);
+    std::unique_ptr<char[]> tmp =
+        std::make_unique<char[]>(req_size + length_size_field);
+    std::unique_ptr<char[]> tmp2 =
+        std::make_unique<char[]>(req_size + length_size_field);
     ::memcpy(tmp.get(), &req_id, sizeof(int));
-    ::memcpy(tmp.get()+sizeof(int), &node_id, sizeof(int));
+    ::memcpy(tmp.get() + sizeof(int), &node_id, sizeof(int));
     construct_message(tmp2.get(), tmp.get(), req_size);
     int send_fd = connection.second.sending_socket;
-    sent_request(tmp2.get(), sizeof(uint64_t)+length_size_field, send_fd); 
+    sent_request(tmp2.get(), sizeof(uint64_t) + length_size_field, send_fd);
   }
   sleep(synthetic_delay_in_s);
 }
@@ -62,36 +66,37 @@ static void sender(std::unordered_map<int, connection> cluster_info) {
   }
 }
 template <typename Value>
-std::ostream& operator<<(std::ostream& os, const std::vector<Value>& vec) {
-    os << "[ ";
-    for (auto& elem :vec) {
-      os << elem << " ";
-    }
-    os << "]\n";
+std::ostream &operator<<(std::ostream &os, const std::vector<Value> &vec) {
+  os << "[ ";
+  for (auto &elem : vec) {
+    os << elem << " ";
+  }
+  os << "]\n";
 }
 
 template <typename Key, typename Value>
-std::ostream& operator<<(std::ostream& os, const std::unordered_map<Key, Value>& map) {
-    os << "{";
-    bool first = true;
-    for (const auto& pair : map) {
-        if (!first) {
-            os << ", ";
-        }
-        os << pair.first << ": " << pair.second;
-        first = false;
+std::ostream &operator<<(std::ostream &os,
+                         const std::unordered_map<Key, Value> &map) {
+  os << "{";
+  bool first = true;
+  for (const auto &pair : map) {
+    if (!first) {
+      os << ", ";
     }
-    os << "}";
-    return os;
+    os << pair.first << ": " << pair.second;
+    first = false;
+  }
+  os << "}";
+  return os;
 }
 
 static void
 cleanup_log(std::unordered_map<int, std::vector<int>> &replication_log,
-            int &last_cleanup, state& s) {
+            int &last_cleanup, state &s) {
   auto &starting_cmt = last_cleanup;
   for (;;) {
-  fmt::print("[{}] for last_cleanup={}\n", __func__, last_cleanup);
-  
+    fmt::print("[{}] for last_cleanup={}\n", __func__, last_cleanup);
+
     if (replication_log.find(starting_cmt) == replication_log.end()) {
       std::cout << __PRETTY_FUNCTION__ << " " << replication_log << "\n";
       return;
@@ -99,13 +104,12 @@ cleanup_log(std::unordered_map<int, std::vector<int>> &replication_log,
     if (replication_log[starting_cmt].size() == kNodesSize) {
       replication_log.erase(starting_cmt);
       starting_cmt++;
-    } 
-    else if (starting_cmt <= s.cmt_idx) {
+    } else if (starting_cmt <= s.cmt_idx) {
       replication_log.erase(starting_cmt);
       starting_cmt++;
-    }
-    else {
-      fmt::print("[{}] replication_log[{}].size()={}\n", __func__, starting_cmt, replication_log.size());
+    } else {
+      fmt::print("[{}] replication_log[{}].size()={}\n", __func__, starting_cmt,
+                 replication_log.size());
       std::cout << __PRETTY_FUNCTION__ << " " << replication_log << "\n";
       return;
     }
@@ -115,7 +119,7 @@ cleanup_log(std::unordered_map<int, std::vector<int>> &replication_log,
 static void iterate_log_and_commit(
     std::unordered_map<int, std::vector<int>> &replication_log, state &s) {
   auto next_cmt = s.cmt_idx + 1;
-  auto& prev_node = s.last_cmt_node;
+  auto &prev_node = s.last_cmt_node;
   for (;;) {
     if (replication_log.find(next_cmt) == replication_log.end()) {
       s.cmt_idx = next_cmt - 1;
@@ -139,32 +143,34 @@ static void iterate_log_and_commit(
 }
 
 std::mutex mtx;
-static void receiver(std::unordered_map<int, connection> cluster_info, int follower_id) {
+static void receiver(std::unordered_map<int, connection> cluster_info,
+                     int follower_id) {
   std::unordered_map<int, std::vector<int>> replication_log;
   int last_cleanup = 0;
   state s(-1, -1);
   bool check_for_cleanup = false;
   int processed_reqs = 0;
-  connection& conn = cluster_info[follower_id];
+  connection &conn = cluster_info[follower_id];
   int recv_fd = conn.listening_socket;
   for (;;) {
-    if ((s.cmt_idx+1) == nb_requests) {
-          std::unique_lock<std::mutex> l(mtx);
+    if ((s.cmt_idx + 1) == nb_requests) {
+      std::unique_lock<std::mutex> l(mtx);
 
-            cleanup_log(replication_log, last_cleanup, s);
+      cleanup_log(replication_log, last_cleanup, s);
 
-      fmt::print("[{}] cmt_idx={} replication_log={}\n", __func__, s.cmt_idx, replication_log.size());
+      fmt::print("[{}] cmt_idx={} replication_log={}\n", __func__, s.cmt_idx,
+                 replication_log.size());
 
       return;
     }
-  
+
     auto [bytecount, buffer] = secure_recv(recv_fd);
     if (static_cast<int>(bytecount) <= 0) {
       // TODO: do some error handling here
       fmt::print("[{}] error\n", __func__);
-      fmt::print("[{}] cmt_idx={} replication_log={}\n", __func__, s.cmt_idx, replication_log.size());
+      fmt::print("[{}] cmt_idx={} replication_log={}\n", __func__, s.cmt_idx,
+                 replication_log.size());
       return;
-
     }
     int ack_id, node_id;
     auto extract = [&]() {
@@ -174,7 +180,8 @@ static void receiver(std::unordered_map<int, connection> cluster_info, int follo
       ::memcpy(&node_id, buffer.get() + sizeof(ack_id), sizeof(node_id));
     };
     extract();
-    fmt::print("[{}] bytecount={} req_id/cmt_idx={} node_id={}\n", __func__, bytecount, ack_id, node_id);
+    fmt::print("[{}] bytecount={} req_id/cmt_idx={} node_id={}\n", __func__,
+               bytecount, ack_id, node_id);
 
     std::unique_lock<std::mutex> l(mtx);
     if ((ack_id > s.cmt_idx) &&
@@ -186,13 +193,12 @@ static void receiver(std::unordered_map<int, connection> cluster_info, int follo
       // cleanup_log(replication_log, last_cleanup);
       check_for_cleanup = true;
     }
-    
+
     iterate_log_and_commit(replication_log, s);
     if (kNodesSize == 2 || check_for_cleanup) {
-            cleanup_log(replication_log, last_cleanup, s);
+      cleanup_log(replication_log, last_cleanup, s);
       check_for_cleanup = false;
     }
-    
   }
 }
 
@@ -288,10 +294,9 @@ static int create_receiver_connection() {
              inet_ntoa(their_addr.sin_addr), // NOLINT(concurrency-mt-unsafe)
              port);
   fcntl(new_fd, F_SETFL, O_NONBLOCK);
-  //create_communication_pair(new_fd);
+  // create_communication_pair(new_fd);
   return new_fd;
 }
-
 
 std::tuple<int, int> client(int port, int follower_id) {
   hostip = gethostbyname("localhost");
@@ -304,21 +309,25 @@ std::tuple<int, int> client(int port, int follower_id) {
   return {sending_fd, fd};
 }
 
-
-
 int main(void) {
   auto follower_1_port = 18000;
-  auto [sending_socket_f1, listening_socket_f1] = client(follower_1_port, follower_1_id);
-  fmt::print("{} follower_1={} at port={}\n", __func__, sending_socket_f1, follower_1_port);
+  auto [sending_socket_f1, listening_socket_f1] =
+      client(follower_1_port, follower_1_id);
+  fmt::print("{} follower_1={} at port={}\n", __func__, sending_socket_f1,
+             follower_1_port);
 
   std::unordered_map<int, connection> cluster_info;
-  cluster_info.insert(std::make_pair(1, connection_t(listening_socket_f1, sending_socket_f1)));
+  cluster_info.insert(
+      std::make_pair(1, connection_t(listening_socket_f1, sending_socket_f1)));
 
   fmt::print("[{}] connection w/ follower_1 initialized\n", __func__);
-  auto [sending_socket_f2, listening_socket_f2] = client(follower_2_port, follower_2_id);
-  fmt::print("{} follower_2={} at port={}\n", __func__, sending_socket_f2, follower_2_port);
+  auto [sending_socket_f2, listening_socket_f2] =
+      client(follower_2_port, follower_2_id);
+  fmt::print("{} follower_2={} at port={}\n", __func__, sending_socket_f2,
+             follower_2_port);
 
-  cluster_info.insert(std::make_pair(2, connection_t(listening_socket_f2, sending_socket_f2)));
+  cluster_info.insert(
+      std::make_pair(2, connection_t(listening_socket_f2, sending_socket_f2)));
 
   fmt::print("[{}] connection w/ follower_2 initialized\n", __func__);
 

@@ -1,3 +1,4 @@
+#include "common.hpp"
 #include "config.h"
 #include "net/shared.h"
 #include <arpa/inet.h>
@@ -16,7 +17,6 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
-#include "common.hpp"
 
 int reply_socket = -1;
 // how many pending connections the queue will hold?
@@ -29,21 +29,21 @@ struct state {
   int cmt_idx;
 };
 
-
-static int
-send_new_cmt_idx(const state &s,
-                 const int send_fd, const int cur_node_id) {
+static int send_new_cmt_idx(const state &s, const int send_fd,
+                            const int cur_node_id) {
   static int send_cmt_idx = 0;
   auto req_size = sizeof(int) + sizeof(int);
   int node_id = cur_node_id;
   fmt::print("[{}] for req_id={}\n", __func__, s.cmt_idx);
-  std::unique_ptr<char[]> tmp = std::make_unique<char[]>(req_size+length_size_field);
-  std::unique_ptr<char[]> tmp2 = std::make_unique<char[]>(req_size+length_size_field);
+  std::unique_ptr<char[]> tmp =
+      std::make_unique<char[]>(req_size + length_size_field);
+  std::unique_ptr<char[]> tmp2 =
+      std::make_unique<char[]>(req_size + length_size_field);
   ::memcpy(tmp.get(), &(s.cmt_idx), sizeof(int));
-  ::memcpy(tmp.get()+sizeof(int), &node_id, sizeof(int));
+  ::memcpy(tmp.get() + sizeof(int), &node_id, sizeof(int));
   construct_message(tmp2.get(), tmp.get(), req_size);
-  
-  sent_request(tmp2.get(), sizeof(uint64_t)+length_size_field, send_fd);
+
+  sent_request(tmp2.get(), sizeof(uint64_t) + length_size_field, send_fd);
   send_cmt_idx = s.cmt_idx;
   return send_cmt_idx;
 }
@@ -51,7 +51,7 @@ send_new_cmt_idx(const state &s,
 static void iterate_log_and_commit(
     std::unordered_map<int, std::vector<int>> &replication_log, state &s) {
   auto next_cmt = s.cmt_idx + 1;
-  
+
   for (;;) {
     if (replication_log.find(next_cmt) == replication_log.end()) {
       s.cmt_idx = next_cmt - 1;
@@ -62,17 +62,19 @@ static void iterate_log_and_commit(
   }
 }
 
-static void receiver(std::unordered_map<int, connection> cluster_info, int cur_node_id) {
+static void receiver(std::unordered_map<int, connection> cluster_info,
+                     int cur_node_id) {
   std::unordered_map<int, std::vector<int>> replication_log;
   state s(-1, -1);
   int last_cmt_ack_id = 0;
   int processed_reqs = 0;
-  connection& conn = cluster_info[0];
+  connection &conn = cluster_info[0];
   int recv_fd = conn.listening_socket;
   int send_fd = conn.sending_socket;
   for (;;) {
-    if ((last_cmt_ack_id+1) == nb_requests) {
-            fmt::print("[{}] cmt_idx={} replication_log={}\n", __func__, s.cmt_idx, replication_log.size());
+    if ((last_cmt_ack_id + 1) == nb_requests) {
+      fmt::print("[{}] cmt_idx={} replication_log={}\n", __func__, s.cmt_idx,
+                 replication_log.size());
       return;
     }
     auto [bytecount, buffer] = secure_recv(recv_fd);
@@ -90,25 +92,25 @@ static void receiver(std::unordered_map<int, connection> cluster_info, int cur_n
       ::memcpy(&node_id, buffer.get() + sizeof(req_id), sizeof(node_id));
     };
     extract();
-    fmt::print("[{}] bytecount={} req_id={} node_id={}\n", __func__, bytecount, req_id, node_id);
+    fmt::print("[{}] bytecount={} req_id={} node_id={}\n", __func__, bytecount,
+               req_id, node_id);
 
     if ((req_id > s.cmt_idx) &&
         (replication_log.find(req_id) == replication_log.end())) {
       replication_log.insert({req_id, std::vector<int>{}});
       replication_log[req_id].push_back(node_id);
-    } 
+    }
     iterate_log_and_commit(replication_log, s);
     processed_reqs = s.cmt_idx;
     last_cmt_ack_id = send_new_cmt_idx(s, send_fd, cur_node_id);
   }
-  
 }
 
 int create_communication_pair(int listening_socket, int node_id) {
   auto *he = hostip;
   fmt::print("{}\n", __PRETTY_FUNCTION__);
   // TODO: port = take the string
-  int port = client_base_addr+ node_id;
+  int port = client_base_addr + node_id;
 
   int sockfd = -1;
   if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
@@ -116,8 +118,7 @@ int create_communication_pair(int listening_socket, int node_id) {
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     exit(1);
   }
-    fmt::print("{} sockfd={}\n", __PRETTY_FUNCTION__, sockfd);
-
+  fmt::print("{} sockfd={}\n", __PRETTY_FUNCTION__, sockfd);
 
   // connector.s address information
   sockaddr_in their_addr{};
@@ -131,7 +132,7 @@ int create_communication_pair(int listening_socket, int node_id) {
   for (size_t retry = 0; retry < number_of_connect_attempts; retry++) {
     if (connect(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
                 sizeof(struct sockaddr)) == -1) {
-        fmt::print("connect {}\n", std::strerror(errno));
+      fmt::print("connect {}\n", std::strerror(errno));
       // NOLINTNEXTLINE(concurrency-mt-unsafe)
       sleep(1);
     } else {
@@ -149,14 +150,15 @@ int create_communication_pair(int listening_socket, int node_id) {
   return sockfd;
 }
 
-static std::tuple<int, int> create_receiver_connection(int follower_1_port, int node_id) {
+static std::tuple<int, int> create_receiver_connection(int follower_1_port,
+                                                       int node_id) {
   fmt::print("{}\n", __PRETTY_FUNCTION__);
   // int port = 18000;
   int port = follower_1_port;
 
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd == -1) {
-    fmt::print("socket err={}\n",std::strerror(errno));
+    fmt::print("socket err={}\n", std::strerror(errno));
     exit(1);
   }
 
@@ -189,7 +191,7 @@ static std::tuple<int, int> create_receiver_connection(int follower_1_port, int 
 
   socklen_t sin_size = sizeof(sockaddr_in);
   fmt::print("{} waiting for new connections at port={}\n", __func__, port);
-  
+
   sockaddr_in their_addr{};
   auto new_fd = accept4(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
                         &sin_size, SOCK_CLOEXEC);
@@ -203,7 +205,7 @@ static std::tuple<int, int> create_receiver_connection(int follower_1_port, int 
              inet_ntoa(their_addr.sin_addr), // NOLINT(concurrency-mt-unsafe)
              port, new_fd);
   fcntl(new_fd, F_SETFL, O_NONBLOCK);
-  
+
   auto fd = create_communication_pair(new_fd, node_id);
   return {new_fd, fd};
 }
@@ -223,15 +225,15 @@ int client(int port) {
 }
 #endif
 
-int main(int args, char* argv[]) {
+int main(int args, char *argv[]) {
   hostip = gethostbyname("localhost");
-  int port ; int node_id;
+  int port;
+  int node_id;
   if (args == 3) {
     fmt::print("./{} node_id={} port={}\n", __func__, argv[1], argv[2]);
     node_id = std::atoi(argv[1]);
     port = std::atoi(argv[2]);
-  }
-  else {
+  } else {
     fmt::print("[{}] usage: ./program <node_id> <port>\n");
     exit(1);
   }
@@ -240,7 +242,9 @@ int main(int args, char* argv[]) {
   auto [recv_fd, send_fd] = create_receiver_connection(port, node_id);
   cluster_info.insert(std::make_pair(0, connection_t(recv_fd, send_fd)));
   sleep(synthetic_delay_in_s);
-  fmt::print("{} connections initialized .. socket-to-send={} socket-to-receive={}\n", __func__, send_fd, recv_fd);
+  fmt::print(
+      "{} connections initialized .. socket-to-send={} socket-to-receive={}\n",
+      __func__, send_fd, recv_fd);
   std::vector<std::thread> threads;
   threads.emplace_back(receiver, cluster_info, node_id);
 
