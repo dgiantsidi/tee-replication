@@ -1,5 +1,5 @@
 CXX = g++
-CXX_FLAGS = -g -O0 -s -Wall -std=c++17 -Wno-unused-function -Wno-unused-value -Wno-return-type -Wno-unused-variable
+CXX_FLAGS = -g -O3 -s -Wall -std=c++20 -Wno-unused-function -Wno-unused-value -Wno-return-type -fsanitize=address
 LD_FLAGS = -lfmt -pthread
 
 SRC_FILES = net/shared.cpp

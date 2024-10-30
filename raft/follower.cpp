@@ -18,17 +18,6 @@
 #include <unordered_map>
 #include <vector>
 
-int reply_socket = -1;
-// how many pending connections the queue will hold?
-constexpr int backlog = 1024;
-
-struct state {
-  explicit state(int _counter, int _cmt_idx)
-      : counter(_counter), cmt_idx(_cmt_idx){};
-  int counter;
-  int cmt_idx;
-};
-
 static int send_new_cmt_idx(const state &s, const int send_fd,
                             const int cur_node_id) {
   static int send_cmt_idx = 0;
@@ -48,40 +37,38 @@ static int send_new_cmt_idx(const state &s, const int send_fd,
   return send_cmt_idx;
 }
 
-static void iterate_log_and_commit(
-    std::unordered_map<int, std::vector<int>> &replication_log, state &s) {
+static void iterate_log_and_commit(in_mem_log &raft_log, state &s) {
   auto next_cmt = s.cmt_idx + 1;
 
   for (;;) {
-    if (replication_log.find(next_cmt) == replication_log.end()) {
+    if (!raft_log.has_key(next_cmt)) {
       s.cmt_idx = next_cmt - 1;
       return;
     }
-    replication_log.erase(next_cmt);
+    raft_log.remove(next_cmt);
     next_cmt++;
   }
 }
 
 static void receiver(std::unordered_map<int, connection> cluster_info,
                      int cur_node_id) {
-  std::unordered_map<int, std::vector<int>> replication_log;
+  in_mem_log_t raft_log;
   state s(-1, -1);
   int last_cmt_ack_id = 0;
-  int processed_reqs = 0;
-  connection &conn = cluster_info[0];
+  connection &conn =
+      cluster_info[0]; // follower is only connected to the leader
   int recv_fd = conn.listening_socket;
   int send_fd = conn.sending_socket;
   for (;;) {
     if ((last_cmt_ack_id + 1) == nb_requests) {
-      fmt::print("[{}] cmt_idx={} replication_log={}\n", __func__, s.cmt_idx,
-                 replication_log.size());
+      fmt::print("[{}] cmt_idx={} raft_log={}\n", __func__, s.cmt_idx,
+                 raft_log.size());
       return;
     }
     auto [bytecount, buffer] = secure_recv(recv_fd);
     if (static_cast<int>(bytecount) <= 0) {
       // TODO: do some error handling here
-      fmt::print("[{}] error\n", __func__);
-      fmt::print("[{}] processed_reqs={}\n", __func__, processed_reqs);
+      fmt::print("[{}] error, s.cmt_idx={}\n", __func__, s.cmt_idx);
     }
     fmt::print("[{}] bytecount={}\n", __func__, bytecount);
     int req_id, node_id;
@@ -92,24 +79,21 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
       ::memcpy(&node_id, buffer.get() + sizeof(req_id), sizeof(node_id));
     };
     extract();
-    fmt::print("[{}] bytecount={} req_id={} node_id={}\n", __func__, bytecount,
-               req_id, node_id);
 
-    if ((req_id > s.cmt_idx) &&
-        (replication_log.find(req_id) == replication_log.end())) {
-      replication_log.insert({req_id, std::vector<int>{}});
-      replication_log[req_id].push_back(node_id);
+    if ((req_id > s.cmt_idx) && !raft_log.has_key(req_id)) {
+      raft_log.insert(req_id, node_id);
     }
-    iterate_log_and_commit(replication_log, s);
-    processed_reqs = s.cmt_idx;
+    fmt::print("[{}] bytecount={} req_id={} node_id={}, log_sz={}\n", __func__,
+               bytecount, req_id, node_id, raft_log.size());
+    // iterate_log_and_commit(replication_log, s);
+    iterate_log_and_commit(raft_log, s);
     last_cmt_ack_id = send_new_cmt_idx(s, send_fd, cur_node_id);
   }
 }
 
-int create_communication_pair(int listening_socket, int node_id) {
+int create_communication_pair(int node_id) {
   auto *he = hostip;
-  fmt::print("{}\n", __PRETTY_FUNCTION__);
-  // TODO: port = take the string
+
   int port = client_base_addr + node_id;
 
   int sockfd = -1;
@@ -118,7 +102,6 @@ int create_communication_pair(int listening_socket, int node_id) {
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     exit(1);
   }
-  fmt::print("{} sockfd={}\n", __PRETTY_FUNCTION__, sockfd);
 
   // connector.s address information
   sockaddr_in their_addr{};
@@ -127,7 +110,7 @@ int create_communication_pair(int listening_socket, int node_id) {
   their_addr.sin_addr = *(reinterpret_cast<in_addr *>(he->h_addr));
   // inet_aton("131.159.102.8", &their_addr.sin_addr);
   memset(&(their_addr.sin_zero), 0, sizeof(their_addr.sin_zero));
-  fmt::print("{} 3\n", __PRETTY_FUNCTION__);
+
   bool successful_connection = false;
   for (size_t retry = 0; retry < number_of_connect_attempts; retry++) {
     if (connect(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
@@ -145,14 +128,11 @@ int create_communication_pair(int listening_socket, int node_id) {
                __func__, number_of_connect_attempts);
     exit(1);
   }
-  fmt::print("{} {}\n", listening_socket, sockfd);
-  reply_socket = sockfd;
   return sockfd;
 }
 
 static std::tuple<int, int> create_receiver_connection(int follower_1_port,
                                                        int node_id) {
-  fmt::print("{}\n", __PRETTY_FUNCTION__);
   // int port = 18000;
   int port = follower_1_port;
 
@@ -190,12 +170,12 @@ static std::tuple<int, int> create_receiver_connection(int follower_1_port,
   }
 
   socklen_t sin_size = sizeof(sockaddr_in);
-  fmt::print("{} waiting for new connections at port={}\n", __func__, port);
+  fmt::print("[{}] waiting for new connections at port={}\n", __func__, port);
 
   sockaddr_in their_addr{};
-  auto new_fd = accept4(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
-                        &sin_size, SOCK_CLOEXEC);
-  if (new_fd == -1) {
+  auto recv_fd = accept4(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
+                         &sin_size, SOCK_CLOEXEC);
+  if (recv_fd == -1) {
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     fmt::print("accept() failed .. {}\n", std::strerror(errno));
     exit(1);
@@ -203,40 +183,31 @@ static std::tuple<int, int> create_receiver_connection(int follower_1_port,
 
   fmt::print("received request from client: {}:{} (fd={})\n",
              inet_ntoa(their_addr.sin_addr), // NOLINT(concurrency-mt-unsafe)
-             port, new_fd);
-  fcntl(new_fd, F_SETFL, O_NONBLOCK);
+             port, recv_fd);
+  fcntl(recv_fd, F_SETFL, O_NONBLOCK);
 
-  auto fd = create_communication_pair(new_fd, node_id);
-  return {new_fd, fd};
+  auto send_fd = create_communication_pair(node_id);
+  return {recv_fd, send_fd};
 }
 
-#if 0
-int client(int port) {
-  hostip = gethostbyname("localhost");
-  auto sending_fd = -1;
-  auto fd = connect_to_the_server(port, "localhost", sending_fd);
-
-  // NOLINTNEXTLINE(concurrency-mt-unsafe)
-  // sleep(2);
-  fmt::print("[{}] connect_to_the_server sending_fd={} fd={}\n", __func__,
-             sending_fd, fd);
-
-  return fd;
-}
-#endif
-
-int main(int args, char *argv[]) {
-  hostip = gethostbyname("localhost");
-  int port;
-  int node_id;
+using PortId = int;
+using NodeId = int;
+static std::tuple<PortId, NodeId> parse_args(int args, char *argv[]) {
+  int port, node_id;
   if (args == 3) {
     fmt::print("./{} node_id={} port={}\n", __func__, argv[1], argv[2]);
     node_id = std::atoi(argv[1]);
     port = std::atoi(argv[2]);
   } else {
-    fmt::print("[{}] usage: ./program <node_id> <port>\n");
+    fmt::print("[{}] usage: ./program <node_id> <port>\n", __func__);
     exit(1);
   }
+  return {port, node_id};
+}
+
+int main(int args, char *argv[]) {
+  hostip = gethostbyname("localhost");
+  auto [port, node_id] = parse_args(args, argv);
 
   std::unordered_map<int, connection> cluster_info;
   auto [recv_fd, send_fd] = create_receiver_connection(port, node_id);

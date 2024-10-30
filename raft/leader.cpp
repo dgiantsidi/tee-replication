@@ -26,20 +26,6 @@ constexpr std::string_view usage =
 // cppcoreguidelines-avoid-non-const-global-variables)
 // hostent *hostip = gethostbyname("localhost");
 
-int reply_socket = -1;
-// how many pending connections the queue will hold?
-constexpr int backlog = 1024;
-
-struct state {
-  explicit state(int _counter, int _cmt_idx)
-      : counter(_counter), cmt_idx(_cmt_idx) {
-    last_cmt_node = -1;
-  };
-  int counter;
-  int cmt_idx;
-  int last_cmt_node;
-};
-
 static void
 gen_and_send_request(std::unordered_map<int, connection> &cluster_info,
                      int req_id) {
@@ -65,75 +51,52 @@ static void sender(std::unordered_map<int, connection> cluster_info) {
     gen_and_send_request(cluster_info, i);
   }
 }
-template <typename Value>
-std::ostream &operator<<(std::ostream &os, const std::vector<Value> &vec) {
-  os << "[ ";
-  for (auto &elem : vec) {
-    os << elem << " ";
-  }
-  os << "]\n";
-}
-
-template <typename Key, typename Value>
-std::ostream &operator<<(std::ostream &os,
-                         const std::unordered_map<Key, Value> &map) {
-  os << "{";
-  bool first = true;
-  for (const auto &pair : map) {
-    if (!first) {
-      os << ", ";
-    }
-    os << pair.first << ": " << pair.second;
-    first = false;
-  }
-  os << "}";
-  return os;
-}
 
 static void
-cleanup_log(std::unordered_map<int, std::vector<int>> &replication_log,
-            int &last_cleanup, state &s) {
+// cleanup_log(std::unordered_map<int, std::vector<int>> &replication_log,
+//            int &last_cleanup, state &s)
+cleanup_log(in_mem_log_t &raft_log, int &last_cleanup, state &s) {
   auto &starting_cmt = last_cleanup;
   for (;;) {
     fmt::print("[{}] for last_cleanup={}\n", __func__, last_cleanup);
 
-    if (replication_log.find(starting_cmt) == replication_log.end()) {
-      std::cout << __PRETTY_FUNCTION__ << " " << replication_log << "\n";
+    if (!raft_log.has_key(starting_cmt)) {
+      raft_log.print();
       return;
     }
-    if (replication_log[starting_cmt].size() == kNodesSize) {
-      replication_log.erase(starting_cmt);
+    if (raft_log.size_at_key(starting_cmt) == kNodesSize) {
+      raft_log.remove(starting_cmt);
       starting_cmt++;
     } else if (starting_cmt <= s.cmt_idx) {
-      replication_log.erase(starting_cmt);
+      raft_log.remove(starting_cmt);
       starting_cmt++;
     } else {
       fmt::print("[{}] replication_log[{}].size()={}\n", __func__, starting_cmt,
-                 replication_log.size());
-      std::cout << __PRETTY_FUNCTION__ << " " << replication_log << "\n";
+                 raft_log.size());
+      raft_log.print();
       return;
     }
   }
 }
 
-static void iterate_log_and_commit(
-    std::unordered_map<int, std::vector<int>> &replication_log, state &s) {
+static void iterate_log_and_commit(in_mem_log_t &raft_log, state &s) {
   auto next_cmt = s.cmt_idx + 1;
+  raft_log.print();
   auto &prev_node = s.last_cmt_node;
   for (;;) {
-    if (replication_log.find(next_cmt) == replication_log.end()) {
+    if (!raft_log.has_key(next_cmt)) {
       s.cmt_idx = next_cmt - 1;
       return;
     }
-    if (replication_log[next_cmt].size() == kNodesSize) {
+    if (raft_log.size_at_key(next_cmt) == kNodesSize) {
       fmt::print("[{}] committed for cmt={}\n", __func__, next_cmt);
-
       next_cmt++;
       continue;
     }
-    if ((prev_node == -1) || (prev_node == replication_log[next_cmt][0])) {
-      prev_node = replication_log[next_cmt][0];
-      fmt::print("[{}] committed for cmt={}\n", __func__, next_cmt);
+    if ((prev_node == -1) || (prev_node == raft_log.get_node_at(next_cmt))) {
+      prev_node = raft_log.get_node_at(next_cmt);
+      fmt::print("[{}] committed for cmt={} w/ prev_node={}\n", __func__,
+                 next_cmt, prev_node);
       next_cmt++;
     } else {
       s.cmt_idx = next_cmt - 1;
@@ -142,24 +105,22 @@ static void iterate_log_and_commit(
   }
 }
 
-std::mutex mtx;
 static void receiver(std::unordered_map<int, connection> cluster_info,
                      int follower_id) {
   std::unordered_map<int, std::vector<int>> replication_log;
+  in_mem_log_t raft_log;
   int last_cleanup = 0;
   state s(-1, -1);
-  bool check_for_cleanup = false;
-  int processed_reqs = 0;
+
   connection &conn = cluster_info[follower_id];
   int recv_fd = conn.listening_socket;
   for (;;) {
     if ((s.cmt_idx + 1) == nb_requests) {
-      std::unique_lock<std::mutex> l(mtx);
 
-      cleanup_log(replication_log, last_cleanup, s);
+      cleanup_log(raft_log, last_cleanup, s);
 
       fmt::print("[{}] cmt_idx={} replication_log={}\n", __func__, s.cmt_idx,
-                 replication_log.size());
+                 raft_log.size());
 
       return;
     }
@@ -183,22 +144,14 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
     fmt::print("[{}] bytecount={} req_id/cmt_idx={} node_id={}\n", __func__,
                bytecount, ack_id, node_id);
 
-    std::unique_lock<std::mutex> l(mtx);
-    if ((ack_id > s.cmt_idx) &&
-        (replication_log.find(ack_id) == replication_log.end())) {
-      replication_log.insert({ack_id, std::vector<int>{}});
-      replication_log[ack_id].push_back(node_id);
+    if ((ack_id > s.cmt_idx) && !raft_log.has_key(ack_id)) {
+      raft_log.insert(ack_id, node_id);
     } else {
-      replication_log[ack_id].push_back(node_id);
-      // cleanup_log(replication_log, last_cleanup);
-      check_for_cleanup = true;
+      raft_log.append(ack_id, node_id);
     }
 
-    iterate_log_and_commit(replication_log, s);
-    if (kNodesSize == 2 || check_for_cleanup) {
-      cleanup_log(replication_log, last_cleanup, s);
-      check_for_cleanup = false;
-    }
+    iterate_log_and_commit(raft_log, s);
+    cleanup_log(raft_log, last_cleanup, s);
   }
 }
 
@@ -241,7 +194,6 @@ void create_communication_pair(int listening_socket) {
     exit(1);
   }
   fmt::print("{} {}\n", listening_socket, sockfd);
-  reply_socket = sockfd;
 }
 
 static int create_receiver_connection() {
