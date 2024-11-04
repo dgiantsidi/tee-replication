@@ -127,7 +127,9 @@ auto secure_send(int fd, char *data, size_t len) -> std::optional<size_t>;
  */
 inline void construct_message(char *dst, const char *payload,
                               size_t payload_size) {
+#if 0
   fmt::print("[{}] payload_size={}\n", __func__, payload_size);
+#endif
   convert_int_to_byte_array(dst, payload_size);
   ::memcpy(dst + length_size_field, payload, payload_size);
 }
@@ -232,11 +234,13 @@ static int connect_to_the_server(int port, char const * /*hostname*/,
 static void sent_request(char *request, size_t size, int sockfd) {
   if (auto numbytes = secure_send(sockfd, request, size); !numbytes) {
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
-    fmt::print("{}\n", std::strerror(errno));
+    fmt::print("[{}] {}\n", std::strerror(errno), __func__);
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     exit(1);
   }
+#if 0
   fmt::print("[{}] sents {} bytes\n", __func__, size);
+#endif
 }
 
 auto recv_ack(auto listening_socket)

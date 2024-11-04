@@ -1,3 +1,4 @@
+#include "crypto.hpp"
 #include <fmt/printf.h>
 #include <iostream>
 #include <mutex>
@@ -92,6 +93,7 @@ struct in_mem_log_t {
   }
 
   void print() {
+#if 0
     std::unique_lock<std::mutex> tmp_log(mtx);
     for (auto &pair : replication_log) {
       fmt::print("{} ", pair.first);
@@ -100,6 +102,7 @@ struct in_mem_log_t {
       }
       fmt::print("\n");
     }
+#endif
 
     // std::cout << __func__ << " " << replication_log << "\n";
   }
@@ -122,3 +125,39 @@ struct in_mem_log_t {
 };
 
 using in_mem_log = in_mem_log_t;
+
+struct authenticator_hmac_t {
+  static std::tuple<std::vector<unsigned char>, size_t>
+  generate_attested_msg(const char *payload, size_t payload_sz) {
+    auto [hmac_data, hmac_sz] =
+        hmac_sha256(reinterpret_cast<const uint8_t *>(payload), payload_sz);
+    std::vector<unsigned char> attested_msg(hmac_sz + payload_sz);
+
+    print_buf(reinterpret_cast<char *>(hmac_data.data()), hmac_sz, __func__);
+    ::memcpy(attested_msg.data(), hmac_data.data(), hmac_sz);
+    ::memcpy(attested_msg.data() + hmac_sz, payload, payload_sz);
+    return std::make_pair(attested_msg, hmac_sz + payload_sz);
+  }
+
+  static void print_buf(char *msg, size_t sz, const char *funcname) {
+#if 0
+    fmt::print("{}: [ ", funcname);
+    for (auto i = 0ULL; i < sz; i++) 
+      fmt::print("{} ", (int)(msg[i]));
+    fmt::print("]\n");
+#endif
+  }
+
+  static void print_buf(unsigned char *msg, size_t sz, const char *funcname) {
+#if 0
+    fmt::print("{}: [ ", funcname);
+    for (auto i = 0ULL; i < sz; i++) 
+      fmt::print("{} ", (int)(msg[i]));
+    fmt::print("]\n");
+#endif
+  }
+
+  static char *verify_attested_msg(char *attested_msg, size_t attested_msg_sz) {
+    return attested_msg + _hmac_size;
+  }
+};

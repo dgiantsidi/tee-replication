@@ -23,16 +23,21 @@ static int send_new_cmt_idx(const state &s, const int send_fd,
   static int send_cmt_idx = 0;
   auto req_size = sizeof(int) + sizeof(int);
   int node_id = cur_node_id;
-  fmt::print("[{}] for req_id={}\n", __func__, s.cmt_idx);
-  std::unique_ptr<char[]> tmp =
-      std::make_unique<char[]>(req_size + length_size_field);
-  std::unique_ptr<char[]> tmp2 =
-      std::make_unique<char[]>(req_size + length_size_field);
-  ::memcpy(tmp.get(), &(s.cmt_idx), sizeof(int));
-  ::memcpy(tmp.get() + sizeof(int), &node_id, sizeof(int));
-  construct_message(tmp2.get(), tmp.get(), req_size);
+  // fmt::print("[{}] for req_id={}\n", __func__, s.cmt_idx);
+  std::unique_ptr<char[]> tmp_data = std::make_unique<char[]>(req_size);
+  ::memcpy(tmp_data.get(), &(s.cmt_idx), sizeof(int));
+  ::memcpy(tmp_data.get() + sizeof(int), &node_id, sizeof(int));
 
-  sent_request(tmp2.get(), sizeof(uint64_t) + length_size_field, send_fd);
+  auto [v_data, size] =
+      authenticator_hmac_t::generate_attested_msg(tmp_data.get(), req_size);
+
+  std::unique_ptr<char[]> tmp =
+      std::make_unique<char[]>(size + length_size_field);
+  const uint8_t *ptr_to_data = v_data.data();
+  construct_message(tmp.get(), reinterpret_cast<const char *>(ptr_to_data),
+                    size);
+
+  sent_request(tmp.get(), size + length_size_field, send_fd);
   send_cmt_idx = s.cmt_idx;
   return send_cmt_idx;
 }
@@ -54,7 +59,7 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
                      int cur_node_id) {
   in_mem_log_t raft_log;
   state s(-1, -1);
-  int last_cmt_ack_id = 0;
+  int last_cmt_ack_id = -1;
   connection &conn =
       cluster_info[0]; // follower is only connected to the leader
   int recv_fd = conn.listening_socket;
@@ -66,25 +71,34 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
       return;
     }
     auto [bytecount, buffer] = secure_recv(recv_fd);
+    authenticator_hmac_t::print_buf(reinterpret_cast<char *>(buffer.get()),
+                                    bytecount, __func__);
+    char *ptr_to_data =
+        authenticator_hmac_t::verify_attested_msg(buffer.get(), bytecount);
+    if (!ptr_to_data) {
+      fmt::print("[{}] error authenticating the message\n", __func__);
+    }
     if (static_cast<int>(bytecount) <= 0) {
       // TODO: do some error handling here
       fmt::print("[{}] error, s.cmt_idx={}\n", __func__, s.cmt_idx);
     }
-    fmt::print("[{}] bytecount={}\n", __func__, bytecount);
+    // fmt::print("[{}] bytecount={}\n", __func__, bytecount);
     int req_id, node_id;
     auto extract = [&]() {
       req_id = -1;
       node_id = -1;
-      ::memcpy(&req_id, buffer.get(), sizeof(req_id));
-      ::memcpy(&node_id, buffer.get() + sizeof(req_id), sizeof(node_id));
+      ::memcpy(&req_id, ptr_to_data, sizeof(req_id));
+      ::memcpy(&node_id, ptr_to_data + sizeof(req_id), sizeof(node_id));
     };
     extract();
 
     if ((req_id > s.cmt_idx) && !raft_log.has_key(req_id)) {
       raft_log.insert(req_id, node_id);
     }
+#if 0
     fmt::print("[{}] bytecount={} req_id={} node_id={}, log_sz={}\n", __func__,
                bytecount, req_id, node_id, raft_log.size());
+#endif
     // iterate_log_and_commit(replication_log, s);
     iterate_log_and_commit(raft_log, s);
     last_cmt_ack_id = send_new_cmt_idx(s, send_fd, cur_node_id);

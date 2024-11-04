@@ -1,4 +1,4 @@
-constexpr int nb_requests = 10000;
+constexpr int nb_requests = 100000;
 constexpr int synthetic_delay_in_s = 0;
 constexpr int kNodesSize = 2;
 
