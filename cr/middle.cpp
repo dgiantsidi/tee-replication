@@ -21,7 +21,6 @@
 int forward_msg(char *data, size_t sz, int send_fd, int cur_node_id) {
   auto req_size = sz;
   int node_id = cur_node_id;
-  // fmt::print("[{}] for req_id={}\n", __func__, s.cmt_idx);
   std::unique_ptr<char[]> tmp_data = std::make_unique<char[]>(req_size);
   ::memcpy(tmp_data.get(), data, req_size);
 
@@ -35,6 +34,8 @@ int forward_msg(char *data, size_t sz, int send_fd, int cur_node_id) {
                     size);
 
   sent_request(tmp.get(), size + length_size_field, send_fd);
+
+  return 1;
 }
 
 static void receiver(std::unordered_map<int, connection> cluster_info,
@@ -45,22 +46,25 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
   connection &conn_head =
       cluster_info[head_id]; // middle is only connected to the leader
   connection &conn_tail =
-      cluster_info[tail_id]; // middle is only connected to the tail
+        cluster_info[tail_id]; // middle is only connected to the tail
   int recv_fd = conn_head.listening_socket;
   int send_fd = conn_tail.sending_socket;
   for (;;) {
     auto [bytecount, buffer] = secure_recv(recv_fd);
     authenticator_hmac_t::print_buf(reinterpret_cast<char *>(buffer.get()),
+
                                     bytecount, __func__);
+    if (static_cast<int>(bytecount) <= 0) {
+      // TODO: do some error handling here
+      fmt::print("[{}] error, s.cmt_idx={}\n", __func__, s.cmt_idx);
+    }
+
     char *ptr_to_data =
         authenticator_hmac_t::verify_attested_msg(buffer.get(), bytecount);
     if (!ptr_to_data) {
       fmt::print("[{}] error authenticating the message\n", __func__);
     }
-    if (static_cast<int>(bytecount) <= 0) {
-      // TODO: do some error handling here
-      fmt::print("[{}] error, s.cmt_idx={}\n", __func__, s.cmt_idx);
-    }
+
     // fmt::print("[{}] bytecount={}\n", __func__, bytecount);
     int req_id, node_id;
     auto extract = [&]() {
@@ -78,8 +82,13 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
       fmt::print("{} error in req_id={} (expected s.cmt_idx+1={})\n", __func__,
                  req_id, (s.cmt_idx + 1));
     }
+    
     forward_msg(ptr_to_data, sizeof(req_id) + sizeof(node_id), send_fd,
-                cur_node_id);
+                   cur_node_id);
+    if ((s.cmt_idx+1) == nb_requests) {
+      fmt::print("{} needs to finish ..\n", __func__);
+      return;
+    }
   }
 }
 
@@ -150,7 +159,7 @@ static std::tuple<int, int> create_receiver_connection(int follower_1_port,
 
   if (bind(sockfd, reinterpret_cast<sockaddr *>(&my_addr), sizeof(sockaddr)) ==
       -1) {
-    fmt::print("bind\n");
+    fmt::print("bind {}\n", std::strerror(errno));
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     exit(1);
   }
@@ -220,14 +229,15 @@ int main(int args, char *argv[]) {
       "{} connections initialized .. socket-to-send={} socket-to-receive={}\n",
       __func__, send_fd, recv_fd);
 
+#if 1
   auto [sending_socket_tail, listening_socket_tail] =
-      client(tail_port+middle_id, tail_id+middle_id);
+      client(tail_port, tail_id);
   fmt::print("{} tail={} at port={}\n", __func__, sending_socket_tail,
-             (tail_port+middle_id));
+             (tail_port));
 
   cluster_info.insert(std::make_pair(
       tail_id, connection_t(listening_socket_tail, sending_socket_tail)));
-
+#endif
   std::vector<std::thread> threads;
   threads.emplace_back(receiver, cluster_info, node_id);
   threads[0].join();

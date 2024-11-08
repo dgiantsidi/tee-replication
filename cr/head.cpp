@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
+#include <tuple>
 
 constexpr std::string_view usage =
     "usage: ./head <ip_follower_1> <port_1> <ip_follower_2> <port_2>";
@@ -29,9 +30,9 @@ constexpr std::string_view usage =
 static void
 gen_and_send_request(std::unordered_map<int, connection> &cluster_info,
                      int req_id) {
-  for (auto &connection : cluster_info) {
+ 
     auto req_size = sizeof(int) + sizeof(int);
-    int node_id = connection.first; // dst node
+    int node_id = middle_id; // dst node
 
     // TODO: also send the leader node
     std::unique_ptr<char[]> tmp_data = std::make_unique<char[]>(req_size);
@@ -54,10 +55,9 @@ gen_and_send_request(std::unordered_map<int, connection> &cluster_info,
                                     __func__);
     authenticator_hmac_t::print_buf(tmp.get() + length_size_field + _hmac_size,
                                     req_size, __func__);
-    int send_fd = connection.second.sending_socket;
+    int send_fd = cluster_info[middle_id].sending_socket;
     sent_request(tmp.get(), size + length_size_field, send_fd);
-  }
-  sleep(synthetic_delay_in_s);
+   sleep(synthetic_delay_in_s);
 }
 
 static void sender(std::unordered_map<int, connection> cluster_info) {
@@ -121,10 +121,9 @@ static void iterate_log_and_commit(in_mem_log_t &raft_log, state &s) {
   }
 }
 
-
 static void receiver_finale(std::unordered_map<int, connection> cluster_info,
-                     int head_id) {
-  
+                            int head_id) {
+
   state s(-1, -1);
 
   connection &conn = cluster_info[head_id];
@@ -159,10 +158,8 @@ static void receiver_finale(std::unordered_map<int, connection> cluster_info,
     fmt::print("[{}] bytecount={} req_id/cmt_idx={} node_id={}\n", __func__,
                bytecount, ack_id, node_id);
 #endif
-
   }
 }
-
 
 static void receiver(std::unordered_map<int, connection> cluster_info,
                      int follower_id) {
@@ -221,7 +218,7 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
   }
 }
 
-void create_communication_pair(int listening_socket) {
+int create_communication_pair(int listening_socket) {
   auto *he = hostip;
   fmt::print("{} ...\n", __PRETTY_FUNCTION__);
   // TODO: port = take the string
@@ -260,15 +257,20 @@ void create_communication_pair(int listening_socket) {
     exit(1);
   }
   fmt::print("{} {}\n", listening_socket, sockfd);
+  return sockfd;
 }
 
-static int create_receiver_connection() {
-  int port = head_port;
+static std::tuple<int, int> create_receiver_connection(int follower_1_port,
+                                                       int node_id, bool biderectional=true) {
+  // int port = 18000;
+  int port = follower_1_port;
+
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd == -1) {
-    fmt::print("socket\n");
+    fmt::print("socket err={}\n", std::strerror(errno));
     exit(1);
   }
+
   int ret = 1;
   if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &ret, sizeof(int)) == -1) {
     fmt::print("setsockopt\n");
@@ -285,7 +287,7 @@ static int create_receiver_connection() {
 
   if (bind(sockfd, reinterpret_cast<sockaddr *>(&my_addr), sizeof(sockaddr)) ==
       -1) {
-    fmt::print("leader cannot bind to port={}\n", port);
+    fmt::print("bind\n");
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     exit(1);
   }
@@ -297,23 +299,27 @@ static int create_receiver_connection() {
   }
 
   socklen_t sin_size = sizeof(sockaddr_in);
-  fmt::print("waiting for new connections ..\n");
-  sockaddr_in their_addr{};
+  fmt::print("[{}] waiting for new connections at port={}\n", __func__, port);
 
-  auto new_fd = accept4(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
-                        &sin_size, SOCK_CLOEXEC);
-  if (new_fd == -1) {
+  sockaddr_in their_addr{};
+  auto recv_fd = accept4(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
+                         &sin_size, SOCK_CLOEXEC);
+  if (recv_fd == -1) {
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
-    fmt::print("accept() failed ..{}\n", std::strerror(errno));
+    fmt::print("accept() failed .. {}\n", std::strerror(errno));
     exit(1);
   }
 
-  fmt::print("received request from client: {}:{}\n",
+  fmt::print("received request from client: {}:{} (fd={})\n",
              inet_ntoa(their_addr.sin_addr), // NOLINT(concurrency-mt-unsafe)
-             port);
-  fcntl(new_fd, F_SETFL, O_NONBLOCK);
-  // create_communication_pair(new_fd);
-  return new_fd;
+             port, recv_fd);
+  fcntl(recv_fd, F_SETFL, O_NONBLOCK);
+  int send_fd;
+  if (biderectional)
+    send_fd = create_communication_pair(node_id);
+  else
+    send_fd = -1;
+  return {recv_fd, send_fd};
 }
 
 std::tuple<int, int> client(int port, int follower_id) {
@@ -330,9 +336,9 @@ std::tuple<int, int> client(int port, int follower_id) {
 int main(void) {
   std::unordered_map<int, connection> cluster_info;
 
- 
   auto [sending_socket_middle, listening_socket_middle] =
       client(middle_port, middle_id);
+
   fmt::print("{} middle={} at port={}\n", __func__, sending_socket_middle,
              middle_port);
 
@@ -340,16 +346,12 @@ int main(void) {
       middle_id, connection_t(listening_socket_middle, sending_socket_middle)));
 
   fmt::print("[{}] connection w/ middle initialized\n", __func__);
-  auto [sending_socket_tail, listening_socket_tail] =
-      client(tail_port, tail_id);
-  fmt::print("{} tail={} at port={}\n", __func__, sending_socket_tail,
-             tail_port);
-  cluster_info.insert(std::make_pair(
-      tail_id, connection_t(listening_socket_tail, sending_socket_tail)));
+#if 1
+ 
 
- auto recv_fd = create_receiver_connection();
+  auto [send_fd, recv_fd] = create_receiver_connection(head_port, head_id, false);
   cluster_info.insert(std::make_pair(head_id, connection_t(recv_fd, -1)));
-    
+#endif
 #if 0
   cluster_info.insert(
       std::make_pair(2, connection_t(listening_socket_tail, sending_socket_tail)));
@@ -360,10 +362,10 @@ int main(void) {
   std::vector<std::thread> threads;
   threads.emplace_back(sender, cluster_info);
   threads.emplace_back(receiver_finale, cluster_info, head_id);
-  threads.emplace_back(receiver, cluster_info, tail_id);
+  //  threads.emplace_back(receiver, cluster_info, tail_id);
 
   threads[0].join();
   threads[1].join();
-  threads[2].join();
+  //  threads[2].join();
   return 0;
 }
