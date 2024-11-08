@@ -178,47 +178,6 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
   }
 }
 
-void create_communication_pair(int listening_socket) {
-  auto *he = hostip;
-  fmt::print("{} ...\n", __PRETTY_FUNCTION__);
-  // TODO: port = take the string
-  int port = 18001;
-
-  int sockfd = -1;
-  if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-    fmt::print("socket {}\n", std::strerror(errno));
-    // NOLINTNEXTLINE(concurrency-mt-unsafe)
-    exit(1);
-  }
-
-  // connector.s address information
-  sockaddr_in their_addr{};
-  their_addr.sin_family = AF_INET;
-  their_addr.sin_port = htons(port);
-  their_addr.sin_addr = *(reinterpret_cast<in_addr *>(he->h_addr));
-  // inet_aton("131.159.102.8", &their_addr.sin_addr);
-  memset(&(their_addr.sin_zero), 0, sizeof(their_addr.sin_zero));
-
-  bool successful_connection = false;
-  for (size_t retry = 0; retry < number_of_connect_attempts; retry++) {
-    if (connect(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
-                sizeof(struct sockaddr)) == -1) {
-      //   	fmt::print("connect {}\n", std::strerror(errno));
-      // NOLINTNEXTLINE(concurrency-mt-unsafe)
-      sleep(1);
-    } else {
-      successful_connection = true;
-      break;
-    }
-  }
-  if (!successful_connection) {
-    fmt::print("[{}] could not connect to client after {} attempts ..\n",
-               __func__, number_of_connect_attempts);
-    exit(1);
-  }
-  fmt::print("{} {}\n", listening_socket, sockfd);
-}
-
 static int create_receiver_connection() {
   int port = 18001;
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -269,7 +228,6 @@ static int create_receiver_connection() {
              inet_ntoa(their_addr.sin_addr), // NOLINT(concurrency-mt-unsafe)
              port);
   fcntl(new_fd, F_SETFL, O_NONBLOCK);
-  // create_communication_pair(new_fd);
   return new_fd;
 }
 
@@ -285,15 +243,14 @@ std::tuple<int, int> client(int port, int follower_id) {
 }
 
 int main(void) {
-  auto follower_1_port = 18000;
   auto [sending_socket_f1, listening_socket_f1] =
       client(follower_1_port, follower_1_id);
   fmt::print("{} follower_1={} at port={}\n", __func__, sending_socket_f1,
              follower_1_port);
 
   std::unordered_map<int, connection> cluster_info;
-  cluster_info.insert(
-      std::make_pair(1, connection_t(listening_socket_f1, sending_socket_f1)));
+  cluster_info.insert(std::make_pair(
+      follower_1_id, connection_t(listening_socket_f1, sending_socket_f1)));
 
   fmt::print("[{}] connection w/ follower_1 initialized\n", __func__);
   auto [sending_socket_f2, listening_socket_f2] =
@@ -301,8 +258,8 @@ int main(void) {
   fmt::print("{} follower_2={} at port={}\n", __func__, sending_socket_f2,
              follower_2_port);
 
-  cluster_info.insert(
-      std::make_pair(2, connection_t(listening_socket_f2, sending_socket_f2)));
+  cluster_info.insert(std::make_pair(
+      follower_2_id, connection_t(listening_socket_f2, sending_socket_f2)));
 
   fmt::print("[{}] connection w/ follower_2 initialized\n", __func__);
 

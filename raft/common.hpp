@@ -158,6 +158,13 @@ struct authenticator_hmac_t {
   }
 
   static char *verify_attested_msg(char *attested_msg, size_t attested_msg_sz) {
+    auto [calc_attestation, size] = generate_attested_msg(
+        (attested_msg + _hmac_size), attested_msg_sz - _hmac_size);
+    if (::memcmp(attested_msg, calc_attestation.data(), _hmac_size) == 0)
+      return attested_msg + _hmac_size;
+    else {
+      fmt::print("{} verification failed\n", __func__);
+    }
     return attested_msg + _hmac_size;
   }
 };
