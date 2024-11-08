@@ -15,10 +15,10 @@
 #include <sys/socket.h>
 #include <thread>
 #include <time.h>
+#include <tuple>
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
-#include <tuple>
 
 constexpr std::string_view usage =
     "usage: ./head <ip_follower_1> <port_1> <ip_follower_2> <port_2>";
@@ -30,34 +30,34 @@ constexpr std::string_view usage =
 static void
 gen_and_send_request(std::unordered_map<int, connection> &cluster_info,
                      int req_id) {
- 
-    auto req_size = sizeof(int) + sizeof(int);
-    int node_id = middle_id; // dst node
 
-    // TODO: also send the leader node
-    std::unique_ptr<char[]> tmp_data = std::make_unique<char[]>(req_size);
-    ::memcpy(tmp_data.get(), &req_id, sizeof(int));
-    ::memcpy(tmp_data.get() + sizeof(int), &node_id, sizeof(int));
-    authenticator_hmac_t::print_buf(tmp_data.get(), req_size, __func__);
+  auto req_size = sizeof(int) + sizeof(int);
+  int node_id = middle_id; // dst node
 
-    auto [v_data, size] =
-        authenticator_hmac_t::generate_attested_msg(tmp_data.get(), req_size);
-    authenticator_hmac_t::print_buf(reinterpret_cast<char *>(v_data.data()),
-                                    size, __func__);
+  // TODO: also send the leader node
+  std::unique_ptr<char[]> tmp_data = std::make_unique<char[]>(req_size);
+  ::memcpy(tmp_data.get(), &req_id, sizeof(int));
+  ::memcpy(tmp_data.get() + sizeof(int), &node_id, sizeof(int));
+  authenticator_hmac_t::print_buf(tmp_data.get(), req_size, __func__);
 
-    std::unique_ptr<char[]> tmp =
-        std::make_unique<char[]>(size + length_size_field);
+  auto [v_data, size] =
+      authenticator_hmac_t::generate_attested_msg(tmp_data.get(), req_size);
+  authenticator_hmac_t::print_buf(reinterpret_cast<char *>(v_data.data()), size,
+                                  __func__);
 
-    const uint8_t *ptr_to_data = v_data.data();
-    construct_message(tmp.get(), reinterpret_cast<const char *>(ptr_to_data),
-                      size);
-    authenticator_hmac_t::print_buf(tmp.get(), size + length_size_field,
-                                    __func__);
-    authenticator_hmac_t::print_buf(tmp.get() + length_size_field + _hmac_size,
-                                    req_size, __func__);
-    int send_fd = cluster_info[middle_id].sending_socket;
-    sent_request(tmp.get(), size + length_size_field, send_fd);
-   sleep(synthetic_delay_in_s);
+  std::unique_ptr<char[]> tmp =
+      std::make_unique<char[]>(size + length_size_field);
+
+  const uint8_t *ptr_to_data = v_data.data();
+  construct_message(tmp.get(), reinterpret_cast<const char *>(ptr_to_data),
+                    size);
+  authenticator_hmac_t::print_buf(tmp.get(), size + length_size_field,
+                                  __func__);
+  authenticator_hmac_t::print_buf(tmp.get() + length_size_field + _hmac_size,
+                                  req_size, __func__);
+  int send_fd = cluster_info[middle_id].sending_socket;
+  sent_request(tmp.get(), size + length_size_field, send_fd);
+  sleep(synthetic_delay_in_s);
 }
 
 static void sender(std::unordered_map<int, connection> cluster_info) {
@@ -133,18 +133,21 @@ static void receiver_finale(std::unordered_map<int, connection> cluster_info,
       fmt::print("[{}] cmt_idx={} finish experiment!\n", __func__, s.cmt_idx);
       return;
     }
+    // fmt::print("{}@socket={}->cmt_idx={}\n", __func__, recv_fd, s.cmt_idx);
 
     auto [bytecount, buffer] = secure_recv(recv_fd);
-    char *ptr_to_data =
-        authenticator_hmac_t::verify_attested_msg(buffer.get(), bytecount);
-    if (!ptr_to_data) {
-      fmt::print("[{}] error authenticating the message\n", __func__);
-    }
+    // fmt::print("{}->from socket={} received {} bytes\n", __func__, recv_fd,
+    // bytecount);
     if (static_cast<int>(bytecount) <= 0) {
       // TODO: do some error handling here
       fmt::print("[{}] error\n", __func__);
       fmt::print("[{}] cmt_idx={}\n", __func__, s.cmt_idx);
       return;
+    }
+    char *ptr_to_data =
+        authenticator_hmac_t::verify_attested_msg(buffer.get(), bytecount);
+    if (!ptr_to_data) {
+      fmt::print("[{}] error authenticating the message\n", __func__);
     }
     int ack_id, node_id;
     auto extract = [&]() {
@@ -154,7 +157,9 @@ static void receiver_finale(std::unordered_map<int, connection> cluster_info,
       ::memcpy(&node_id, ptr_to_data + sizeof(ack_id), sizeof(node_id));
     };
     extract();
-#if 1
+
+    s.cmt_idx = ack_id;
+#if 0
     fmt::print("[{}] bytecount={} req_id/cmt_idx={} node_id={}\n", __func__,
                bytecount, ack_id, node_id);
 #endif
@@ -260,9 +265,9 @@ int create_communication_pair(int listening_socket) {
   return sockfd;
 }
 
-static std::tuple<int, int> create_receiver_connection(int follower_1_port,
-                                                       int node_id, bool biderectional=true) {
-  // int port = 18000;
+static std::tuple<int, int>
+create_receiver_connection(int follower_1_port, int node_id,
+                           bool biderectional = true) {
   int port = follower_1_port;
 
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -347,14 +352,10 @@ int main(void) {
 
   fmt::print("[{}] connection w/ middle initialized\n", __func__);
 #if 1
- 
 
-  auto [send_fd, recv_fd] = create_receiver_connection(head_port, head_id, false);
+  auto [recv_fd, send_fd] =
+      create_receiver_connection(head_port, head_id, false);
   cluster_info.insert(std::make_pair(head_id, connection_t(recv_fd, -1)));
-#endif
-#if 0
-  cluster_info.insert(
-      std::make_pair(2, connection_t(listening_socket_tail, sending_socket_tail)));
 #endif
 
   fmt::print("[{}] connection w/ tail initialized\n", __func__);

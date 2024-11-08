@@ -46,7 +46,7 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
   connection &conn_head =
       cluster_info[head_id]; // middle is only connected to the leader
   connection &conn_tail =
-        cluster_info[tail_id]; // middle is only connected to the tail
+      cluster_info[tail_id]; // middle is only connected to the tail
   int recv_fd = conn_head.listening_socket;
   int send_fd = conn_tail.sending_socket;
   for (;;) {
@@ -82,10 +82,10 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
       fmt::print("{} error in req_id={} (expected s.cmt_idx+1={})\n", __func__,
                  req_id, (s.cmt_idx + 1));
     }
-    
+
     forward_msg(ptr_to_data, sizeof(req_id) + sizeof(node_id), send_fd,
-                   cur_node_id);
-    if ((s.cmt_idx+1) == nb_requests) {
+                cur_node_id);
+    if ((s.cmt_idx + 1) == nb_requests) {
       fmt::print("{} needs to finish ..\n", __func__);
       return;
     }

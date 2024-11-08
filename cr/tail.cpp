@@ -25,23 +25,23 @@ static int send_ack_to_leader(const state &s, const int send_fd,
   std::unique_ptr<uint8_t[]> tmp_data = std::make_unique<uint8_t[]>(req_size);
   ::memcpy(tmp_data.get(), &(s.cmt_idx), sizeof(int));
   ::memcpy(tmp_data.get() + sizeof(int), &node_id, sizeof(int));
-    fmt::print("[{}] for req_id={}\n", __func__, s.cmt_idx);
 
-  auto [v_data, size] =
-      authenticator_hmac_t::generate_attested_msg(reinterpret_cast<char*>(tmp_data.get()), req_size);
-  fmt::print("[{}] for req_id={}mm2\n", __func__, s.cmt_idx);
+  auto [v_data, size] = authenticator_hmac_t::generate_attested_msg(
+      reinterpret_cast<char *>(tmp_data.get()), req_size);
 
   std::unique_ptr<char[]> tmp =
       std::make_unique<char[]>(size + length_size_field);
-  const uint8_t *ptr_to_data = v_data.data() + _hmac_size;
-    fmt::print("[{}] for req_id={} 3\n", __func__, s.cmt_idx);
+  const uint8_t *ptr_to_data = v_data.data();
 
   construct_message(tmp.get(), reinterpret_cast<const char *>(ptr_to_data),
-                    size-_hmac_size);
-    fmt::print("[{}] for req_id={} 4\n", __func__, s.cmt_idx);
+                    size);
 
+  // fmt::print("{}->cmt_idx={}\n", __func__, s.cmt_idx);
   sent_request(tmp.get(), size + length_size_field, send_fd);
-      fmt::print("[{}] for req_id={} 4\n", __func__, s.cmt_idx);
+  if ((s.cmt_idx + 1) == nb_requests) {
+    fmt::print("[{}] cmt_idx={} finish experiment!\n", __func__, s.cmt_idx);
+    return 2;
+  }
 
   return 1;
 }
@@ -64,22 +64,25 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
     authenticator_hmac_t::print_buf(reinterpret_cast<char *>(buffer.get()),
                                     bytecount, __func__);
     if (static_cast<int>(bytecount) <= 0) {
+      if ((s.cmt_idx + 1) == nb_requests) {
+        fmt::print("[{}] cmt_idx={} finish experiment!\n", __func__, s.cmt_idx);
+        return;
+      }
       // TODO: do some error handling here
       fmt::print("[{}] error, s.cmt_idx={}\n", __func__, s.cmt_idx);
     }
-    fmt::print("[{}] bytecount={}\n", __func__, bytecount);
     char *ptr_to_data =
         authenticator_hmac_t::verify_attested_msg(buffer.get(), bytecount);
     if (!ptr_to_data) {
       fmt::print("[{}] error authenticating the message\n", __func__);
     }
-    
+
     int req_id, node_id;
     auto extract = [&]() {
       req_id = -1;
       node_id = -1;
-     // ::memcpy(&req_id, ptr_to_data, sizeof(req_id));
-    //  ::memcpy(&node_id, ptr_to_data + sizeof(req_id), sizeof(node_id));
+      ::memcpy(&req_id, ptr_to_data, sizeof(req_id));
+      ::memcpy(&node_id, ptr_to_data + sizeof(req_id), sizeof(node_id));
     };
     extract();
 
@@ -89,7 +92,7 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
       fmt::print("{} error in req_id={} (expected s.cmt_idx+1={})\n", __func__,
                  req_id, (s.cmt_idx + 1));
     }
-    //fmt::print("{} req_id={}\n", __func__, req_id);
+    // fmt::print("{} req_id={}\n", __func__, req_id);
     send_ack_to_leader(s, send_fd, cur_node_id);
   }
 }
@@ -208,8 +211,9 @@ static std::tuple<PortId, NodeId> parse_args(int args, char *argv[]) {
   return {port, node_id};
 }
 
-static int connect_to_the_server_one_sided_connection(int port, char const * /*hostname*/,
-                                 int server_id) {
+static int connect_to_the_server_one_sided_connection(int port,
+                                                      char const * /*hostname*/,
+                                                      int server_id) {
   // NOLINTNEXTLINE(concurrency-mt-unsafe)
   hostent *he = gethostbyname("localhost");
   fmt::print("{} localhost at port={}\n", __func__, port);
@@ -236,7 +240,7 @@ static int connect_to_the_server_one_sided_connection(int port, char const * /*h
     exit(1);
   }
   return sockfd;
-                                 }
+}
 
 std::tuple<int, int> client(int port, int follower_id) {
   hostip = gethostbyname("localhost");
@@ -258,19 +262,18 @@ int main(int args, char *argv[]) {
   cluster_info.insert(
       std::make_pair(middle_id, connection_t(recv_fd, send_fd)));
 #if 1
-  auto sending_socket_head =
-      connect_to_the_server_one_sided_connection(head_port, "localhost",
-                                 head_id);
+  auto sending_socket_head = connect_to_the_server_one_sided_connection(
+      head_port, "localhost", head_id);
   fmt::print("{} head={} at port={}\n", __func__, sending_socket_head,
              tail_port);
 
-  cluster_info.insert(std::make_pair(
-      head_id, connection_t(-1, sending_socket_head)));
+  cluster_info.insert(
+      std::make_pair(head_id, connection_t(-1, sending_socket_head)));
 #endif
   fmt::print(
       "{} connections initialized .. socket-to-send={} socket-to-receive={}\n",
       __func__, send_fd, recv_fd);
-      
+
   std::vector<std::thread> threads;
   threads.emplace_back(receiver, cluster_info, node_id);
 
