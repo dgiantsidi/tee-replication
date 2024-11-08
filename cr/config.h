@@ -5,10 +5,10 @@ constexpr int kNodesSize = 2;
 constexpr int head_port = 18000;
 constexpr int head_id = 0;
 
-constexpr int middle_port = 18002;
+constexpr int middle_port = 19000;
 constexpr int middle_id = 1;
 
-constexpr int tail_port = 18004;
+constexpr int tail_port = 20000;
 constexpr int tail_id = 2;
 
 // how many pending connections the queue will hold?

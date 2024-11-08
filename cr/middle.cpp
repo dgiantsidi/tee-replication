@@ -221,9 +221,9 @@ int main(int args, char *argv[]) {
       __func__, send_fd, recv_fd);
 
   auto [sending_socket_tail, listening_socket_tail] =
-      client(tail_port, tail_id);
+      client(tail_port+middle_id, tail_id+middle_id);
   fmt::print("{} tail={} at port={}\n", __func__, sending_socket_tail,
-             tail_port);
+             (tail_port+middle_id));
 
   cluster_info.insert(std::make_pair(
       tail_id, connection_t(listening_socket_tail, sending_socket_tail)));

@@ -328,13 +328,14 @@ std::tuple<int, int> client(int port, int follower_id) {
 }
 
 int main(void) {
+  std::unordered_map<int, connection> cluster_info;
 
+ 
   auto [sending_socket_middle, listening_socket_middle] =
       client(middle_port, middle_id);
   fmt::print("{} middle={} at port={}\n", __func__, sending_socket_middle,
              middle_port);
 
-  std::unordered_map<int, connection> cluster_info;
   cluster_info.insert(std::make_pair(
       middle_id, connection_t(listening_socket_middle, sending_socket_middle)));
 
@@ -346,8 +347,9 @@ int main(void) {
   cluster_info.insert(std::make_pair(
       tail_id, connection_t(listening_socket_tail, sending_socket_tail)));
 
-    auto recv_fd = create_receiver_connection();
-    cluster_info.insert(std::make_pair(head_id, connection_t(recv_fd, send_fd)));
+ auto recv_fd = create_receiver_connection();
+  cluster_info.insert(std::make_pair(head_id, connection_t(recv_fd, -1)));
+    
 #if 0
   cluster_info.insert(
       std::make_pair(2, connection_t(listening_socket_tail, sending_socket_tail)));
