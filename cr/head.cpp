@@ -121,6 +121,49 @@ static void iterate_log_and_commit(in_mem_log_t &raft_log, state &s) {
   }
 }
 
+
+static void receiver_finale(std::unordered_map<int, connection> cluster_info,
+                     int head_id) {
+  
+  state s(-1, -1);
+
+  connection &conn = cluster_info[head_id];
+  int recv_fd = conn.listening_socket;
+  for (;;) {
+    if ((s.cmt_idx + 1) == nb_requests) {
+      fmt::print("[{}] cmt_idx={} finish experiment!\n", __func__, s.cmt_idx);
+      return;
+    }
+
+    auto [bytecount, buffer] = secure_recv(recv_fd);
+    char *ptr_to_data =
+        authenticator_hmac_t::verify_attested_msg(buffer.get(), bytecount);
+    if (!ptr_to_data) {
+      fmt::print("[{}] error authenticating the message\n", __func__);
+    }
+    if (static_cast<int>(bytecount) <= 0) {
+      // TODO: do some error handling here
+      fmt::print("[{}] error\n", __func__);
+      fmt::print("[{}] cmt_idx={}\n", __func__, s.cmt_idx);
+      return;
+    }
+    int ack_id, node_id;
+    auto extract = [&]() {
+      ack_id = -1;
+      node_id = -1;
+      ::memcpy(&ack_id, ptr_to_data, sizeof(ack_id));
+      ::memcpy(&node_id, ptr_to_data + sizeof(ack_id), sizeof(node_id));
+    };
+    extract();
+#if 1
+    fmt::print("[{}] bytecount={} req_id/cmt_idx={} node_id={}\n", __func__,
+               bytecount, ack_id, node_id);
+#endif
+
+  }
+}
+
+
 static void receiver(std::unordered_map<int, connection> cluster_info,
                      int follower_id) {
   std::unordered_map<int, std::vector<int>> replication_log;
@@ -220,7 +263,7 @@ void create_communication_pair(int listening_socket) {
 }
 
 static int create_receiver_connection() {
-  int port = 18001;
+  int port = head_port;
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd == -1) {
     fmt::print("socket\n");
@@ -293,13 +336,18 @@ int main(void) {
 
   std::unordered_map<int, connection> cluster_info;
   cluster_info.insert(std::make_pair(
-      1, connection_t(listening_socket_middle, sending_socket_middle)));
+      middle_id, connection_t(listening_socket_middle, sending_socket_middle)));
 
   fmt::print("[{}] connection w/ middle initialized\n", __func__);
   auto [sending_socket_tail, listening_socket_tail] =
-      client(middle_port, middle_id);
+      client(tail_port, tail_id);
   fmt::print("{} tail={} at port={}\n", __func__, sending_socket_tail,
-             middle_port);
+             tail_port);
+  cluster_info.insert(std::make_pair(
+      tail_id, connection_t(listening_socket_tail, sending_socket_tail)));
+
+    auto recv_fd = create_receiver_connection();
+    cluster_info.insert(std::make_pair(head_id, connection_t(recv_fd, send_fd)));
 #if 0
   cluster_info.insert(
       std::make_pair(2, connection_t(listening_socket_tail, sending_socket_tail)));
@@ -309,11 +357,11 @@ int main(void) {
 
   std::vector<std::thread> threads;
   threads.emplace_back(sender, cluster_info);
-  // threads.emplace_back(receiver, cluster_info, middle_id);
+  threads.emplace_back(receiver_finale, cluster_info, head_id);
   threads.emplace_back(receiver, cluster_info, tail_id);
 
   threads[0].join();
-  // threads[1].join();
+  threads[1].join();
   threads[2].join();
   return 0;
 }
