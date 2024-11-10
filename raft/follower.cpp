@@ -122,7 +122,7 @@ int create_communication_pair(int node_id) {
   their_addr.sin_family = AF_INET;
   their_addr.sin_port = htons(port);
   their_addr.sin_addr = *(reinterpret_cast<in_addr *>(he->h_addr));
-  // inet_aton("131.159.102.8", &their_addr.sin_addr);
+  inet_aton(leader_ip.c_str(), &their_addr.sin_addr);
   memset(&(their_addr.sin_zero), 0, sizeof(their_addr.sin_zero));
 
   bool successful_connection = false;

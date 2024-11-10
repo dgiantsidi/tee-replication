@@ -148,10 +148,10 @@ static void sent_init_connection_request(int port, int sockfd) {
 
 #pragma once
 static int connect_to_the_server(int port, char const * hostname,
-                                 int &sending_sock, int server_id) {
+                                 int &sending_sock, int server_id, const char* my_ip) {
   // NOLINTNEXTLINE(concurrency-mt-unsafe)
   hostent *he = gethostbyname("localhost");
-  fmt::print("{} localhost at port={}\n", __func__, port);
+  fmt::print("{} hostname={} at port={}\n", __func__, my_ip, port);
   hostip;
 
   auto rep_fd = 0;
@@ -170,6 +170,7 @@ static int connect_to_the_server(int port, char const * hostname,
     their_addr.sin_addr.s_addr = inet_addr(hostname);  /* IP address */
   memset(&(their_addr.sin_zero), 0, sizeof(their_addr.sin_zero));
 
+  fmt::print("{} trying to connect {}:{}\n", __func__, hostname, port);
   if (connect(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
               sizeof(struct sockaddr)) == -1) {
     fmt::print("connect issue err={}\n", std::strerror(errno));
@@ -200,6 +201,7 @@ static int connect_to_the_server(int port, char const * hostname,
   my_addr.sin_family = AF_INET;         // host byte order
   my_addr.sin_port = htons(port);       // short, network byte order
   my_addr.sin_addr.s_addr = INADDR_ANY; // automatically fill with my IP
+    their_addr.sin_addr.s_addr = inet_addr(my_ip);  /* IP address */
   memset(&(my_addr.sin_zero), 0,
          sizeof(my_addr.sin_zero)); // zero the rest of the struct
 
@@ -217,7 +219,7 @@ static int connect_to_the_server(int port, char const * hostname,
   }
 
   socklen_t sin_size = sizeof(sockaddr_in);
-  fmt::print("[{}] waiting for new connections at port={}\n", __func__, port);
+  fmt::print("[{}] waiting for new connections at {}:{}\n", __func__, my_ip, port);
 
   sockaddr_in tmp_addr{};
   auto new_fd = accept4(repfd, reinterpret_cast<sockaddr *>(&tmp_addr),
