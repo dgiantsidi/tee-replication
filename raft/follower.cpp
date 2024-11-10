@@ -210,7 +210,7 @@ using PortId = int;
 using NodeId = int;
 static std::tuple<PortId, NodeId, const char*> parse_args(int args, char *argv[]) {
   int port, node_id;
-  if (args == 3) {
+  if (args == 4) {
     fmt::print("./{} node_id={} port={}\n", __func__, argv[1], argv[2]);
     node_id = std::atoi(argv[1]);
     port = std::atoi(argv[2]);

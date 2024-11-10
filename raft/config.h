@@ -10,3 +10,6 @@ constexpr int follower_2_id = 2;
 
 // how many pending connections the queue will hold?
 int backlog = 1024;
+
+constexpr std::string follower_ip_1 = "131.159.102.20";
+constexpr std::string follower_ip_2 = "131.159.102.22";

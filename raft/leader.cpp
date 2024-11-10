@@ -231,10 +231,10 @@ static int create_receiver_connection() {
   return new_fd;
 }
 
-std::tuple<int, int> client(int port, int follower_id) {
+std::tuple<int, int> client(int port, int follower_id, const char* ip) {
   hostip = gethostbyname("localhost");
   auto sending_fd = -1;
-  auto fd = connect_to_the_server(port, "localhost", sending_fd, follower_id);
+  auto fd = connect_to_the_server(port, ip, sending_fd, follower_id);
 
   fmt::print("[{}] connect_to_the_server sending_fd={} fd={}\n", __func__,
              sending_fd, fd);
@@ -244,7 +244,7 @@ std::tuple<int, int> client(int port, int follower_id) {
 
 int main(void) {
   auto [sending_socket_f1, listening_socket_f1] =
-      client(follower_1_port, follower_1_id);
+      client(follower_1_port, follower_1_id, follower_ip_1.c_str());
   fmt::print("{} follower_1={} at port={}\n", __func__, sending_socket_f1,
              follower_1_port);
 
@@ -254,7 +254,7 @@ int main(void) {
 
   fmt::print("[{}] connection w/ follower_1 initialized\n", __func__);
   auto [sending_socket_f2, listening_socket_f2] =
-      client(follower_2_port, follower_2_id);
+      client(follower_2_port, follower_2_id, follower_ip_2.c_str());
   fmt::print("{} follower_2={} at port={}\n", __func__, sending_socket_f2,
              follower_2_port);
 
