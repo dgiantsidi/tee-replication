@@ -146,7 +146,7 @@ int create_communication_pair(int node_id) {
 }
 
 static std::tuple<int, int> create_receiver_connection(int follower_1_port,
-                                                       int node_id) {
+                                                       int node_id, const char* my_ip) {
   // int port = 18000;
   int port = follower_1_port;
 
@@ -167,6 +167,8 @@ static std::tuple<int, int> create_receiver_connection(int follower_1_port,
   my_addr.sin_family = AF_INET;         // host byte order
   my_addr.sin_port = htons(port);       // short, network byte order
   my_addr.sin_addr.s_addr = INADDR_ANY; // automatically fill with my IP
+  my_addr.sin_addr.s_addr = inet_addr(my_ip);  /* IP address */
+
   memset(&(my_addr.sin_zero), 0,
          sizeof(my_addr.sin_zero)); // zero the rest of the struct
 
@@ -206,7 +208,7 @@ static std::tuple<int, int> create_receiver_connection(int follower_1_port,
 
 using PortId = int;
 using NodeId = int;
-static std::tuple<PortId, NodeId> parse_args(int args, char *argv[]) {
+static std::tuple<PortId, NodeId, const char*> parse_args(int args, char *argv[]) {
   int port, node_id;
   if (args == 3) {
     fmt::print("./{} node_id={} port={}\n", __func__, argv[1], argv[2]);
@@ -216,15 +218,15 @@ static std::tuple<PortId, NodeId> parse_args(int args, char *argv[]) {
     fmt::print("[{}] usage: ./program <node_id> <port>\n", __func__);
     exit(1);
   }
-  return {port, node_id};
+  return {port, node_id, argv[3]};
 }
 
 int main(int args, char *argv[]) {
   hostip = gethostbyname("localhost");
-  auto [port, node_id] = parse_args(args, argv);
+  auto [port, node_id, my_ip] = parse_args(args, argv);
 
   std::unordered_map<int, connection> cluster_info;
-  auto [recv_fd, send_fd] = create_receiver_connection(port, node_id);
+  auto [recv_fd, send_fd] = create_receiver_connection(port, node_id, my_ip);
   cluster_info.insert(std::make_pair(0, connection_t(recv_fd, send_fd)));
   sleep(synthetic_delay_in_s);
   fmt::print(

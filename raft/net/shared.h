@@ -1,5 +1,6 @@
 #pragma once
 
+#include <arpa/inet.h>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -146,7 +147,7 @@ static void sent_init_connection_request(int port, int sockfd) {
 }
 
 #pragma once
-static int connect_to_the_server(int port, char const * /*hostname*/,
+static int connect_to_the_server(int port, char const * hostname,
                                  int &sending_sock, int server_id) {
   // NOLINTNEXTLINE(concurrency-mt-unsafe)
   hostent *he = gethostbyname("localhost");
@@ -165,7 +166,8 @@ static int connect_to_the_server(int port, char const * /*hostname*/,
   sockaddr_in their_addr{};
   their_addr.sin_family = AF_INET;
   their_addr.sin_port = htons(port);
-  their_addr.sin_addr = *(reinterpret_cast<in_addr *>(he->h_addr));
+//  their_addr.sin_addr = *(reinterpret_cast<in_addr *>(he->h_addr));
+    their_addr.sin_addr.s_addr = inet_addr(hostname);  /* IP address */
   memset(&(their_addr.sin_zero), 0, sizeof(their_addr.sin_zero));
 
   if (connect(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
