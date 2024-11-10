@@ -13,3 +13,8 @@ constexpr int tail_id = 2;
 
 // how many pending connections the queue will hold?
 int backlog = 1024;
+
+constexpr std::string tail_ip = "131.159.102.20";
+constexpr std::string middle_ip = "131.159.102.22";
+constexpr std::string head_ip = "131.159.102.25";
+

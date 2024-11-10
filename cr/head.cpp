@@ -223,11 +223,11 @@ static void receiver(std::unordered_map<int, connection> cluster_info,
   }
 }
 
-int create_communication_pair(int listening_socket) {
+int create_communication_pair(int listening_socket, const char* node_ip) {
   auto *he = hostip;
   fmt::print("{} ...\n", __PRETTY_FUNCTION__);
   // TODO: port = take the string
-  int port = 18001;
+  int port = 18001; // this is specific to head?!!
 
   int sockfd = -1;
   if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
@@ -241,7 +241,7 @@ int create_communication_pair(int listening_socket) {
   their_addr.sin_family = AF_INET;
   their_addr.sin_port = htons(port);
   their_addr.sin_addr = *(reinterpret_cast<in_addr *>(he->h_addr));
-  // inet_aton("131.159.102.8", &their_addr.sin_addr);
+  inet_aton(node_ip, &their_addr.sin_addr);
   memset(&(their_addr.sin_zero), 0, sizeof(their_addr.sin_zero));
 
   bool successful_connection = false;
@@ -266,7 +266,7 @@ int create_communication_pair(int listening_socket) {
 }
 
 static std::tuple<int, int>
-create_receiver_connection(int follower_1_port, int node_id,
+create_receiver_connection(int follower_1_port, const char* ip, int node_id, const char* node_ip = nullptr,
                            bool biderectional = true) {
   int port = follower_1_port;
 
@@ -287,6 +287,8 @@ create_receiver_connection(int follower_1_port, int node_id,
   my_addr.sin_family = AF_INET;         // host byte order
   my_addr.sin_port = htons(port);       // short, network byte order
   my_addr.sin_addr.s_addr = INADDR_ANY; // automatically fill with my IP
+  inet_aton(ip, &my_addr.sin_addr);
+				
   memset(&(my_addr.sin_zero), 0,
          sizeof(my_addr.sin_zero)); // zero the rest of the struct
 
@@ -321,16 +323,16 @@ create_receiver_connection(int follower_1_port, int node_id,
   fcntl(recv_fd, F_SETFL, O_NONBLOCK);
   int send_fd;
   if (biderectional)
-    send_fd = create_communication_pair(node_id);
+    send_fd = create_communication_pair(node_id, node_ip);
   else
     send_fd = -1;
   return {recv_fd, send_fd};
 }
 
-std::tuple<int, int> client(int port, int follower_id) {
+std::tuple<int, int> client(int port, int follower_id, const char* follower_ip, const char* my_ip) {
   hostip = gethostbyname("localhost");
   auto sending_fd = -1;
-  auto fd = connect_to_the_server(port, "localhost", sending_fd, follower_id);
+  auto fd = connect_to_the_server(port, follower_ip, sending_fd, follower_id, my_ip);
 
   fmt::print("[{}] connect_to_the_server sending_fd={} fd={}\n", __func__,
              sending_fd, fd);
@@ -342,9 +344,9 @@ int main(void) {
   std::unordered_map<int, connection> cluster_info;
 
   auto [sending_socket_middle, listening_socket_middle] =
-      client(middle_port, middle_id);
+      client(middle_port, middle_id, middle_ip.c_str(), head_ip.c_str());
 
-  fmt::print("{} middle={} at port={}\n", __func__, sending_socket_middle,
+  fmt::print("{} middle={} at {}:{}\n", __func__, sending_socket_middle, middle_ip,
              middle_port);
 
   cluster_info.insert(std::make_pair(
@@ -354,7 +356,9 @@ int main(void) {
 #if 1
 
   auto [recv_fd, send_fd] =
-      create_receiver_connection(head_port, head_id, false);
+      create_receiver_connection(head_port, head_ip.c_str(), head_id, nullptr, false);
+  fmt::print("{} socket-to-tail={} at {}:{}\n", __func__, send_fd, head_ip,
+             head_port);
   cluster_info.insert(std::make_pair(head_id, connection_t(recv_fd, -1)));
 #endif
 

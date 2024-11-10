@@ -1,5 +1,5 @@
 #pragma once
-
+#include <arpa/inet.h>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -146,11 +146,11 @@ static void sent_init_connection_request(int port, int sockfd) {
 }
 
 #pragma once
-static int connect_to_the_server(int port, char const * /*hostname*/,
-                                 int &sending_sock, int server_id) {
+static int connect_to_the_server(int port, char const * hostname,
+                                 int &sending_sock, int server_id, const char* my_ip) {
   // NOLINTNEXTLINE(concurrency-mt-unsafe)
   hostent *he = gethostbyname("localhost");
-  fmt::print("{} localhost at port={}\n", __func__, port);
+  fmt::print("{} --> {}:{}\n", __func__, hostname, port);
   hostip;
 
   auto rep_fd = 0;
@@ -166,11 +166,12 @@ static int connect_to_the_server(int port, char const * /*hostname*/,
   their_addr.sin_family = AF_INET;
   their_addr.sin_port = htons(port);
   their_addr.sin_addr = *(reinterpret_cast<in_addr *>(he->h_addr));
+  their_addr.sin_addr.s_addr = inet_addr(hostname);  /* IP address */
   memset(&(their_addr.sin_zero), 0, sizeof(their_addr.sin_zero));
 
   if (connect(sockfd, reinterpret_cast<sockaddr *>(&their_addr),
               sizeof(struct sockaddr)) == -1) {
-    fmt::print("connect issue err={}\n", std::strerror(errno));
+    fmt::print("connect issue err={} --> @{}:{}\n", std::strerror(errno), hostname, port);
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     exit(1);
   }
@@ -198,6 +199,8 @@ static int connect_to_the_server(int port, char const * /*hostname*/,
   my_addr.sin_family = AF_INET;         // host byte order
   my_addr.sin_port = htons(port);       // short, network byte order
   my_addr.sin_addr.s_addr = INADDR_ANY; // automatically fill with my IP
+  my_addr.sin_addr.s_addr = inet_addr(my_ip);  /* IP address */
+
   memset(&(my_addr.sin_zero), 0,
          sizeof(my_addr.sin_zero)); // zero the rest of the struct
 
